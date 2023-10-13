@@ -9,9 +9,11 @@ import (
 	"github.com/adamluzsi/frameless/pkg/errorkit"
 	"github.com/adamluzsi/frameless/pkg/httpkit"
 	"github.com/adamluzsi/frameless/pkg/retry"
+	"github.com/adamluzsi/frameless/pkg/zerokit"
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -39,11 +41,12 @@ const (
 
 // Client represents the OpenAI API client.
 type Client struct {
-	BaseURL string
-	APIKey  string
-
+	BaseURL       string
+	APIKey        string
 	HTTPClient    *http.Client
 	RetryStrategy retry.Strategy
+
+	onInit sync.Once
 }
 
 var DefaultRetryStrategy retry.Strategy = retry.Jitter{
@@ -51,19 +54,24 @@ var DefaultRetryStrategy retry.Strategy = retry.Jitter{
 	MaxWaitDuration: 3 * time.Second,
 }
 
-func (c *Client) getRetryStrategy() retry.Strategy {
-	if c.RetryStrategy == nil {
-		return DefaultRetryStrategy
-	}
-	return c.RetryStrategy
-}
-
-// getBaseURL returns the base URL for API requests.
-func (c *Client) getBaseURL() string {
-	if len(c.BaseURL) == 0 {
-		c.BaseURL = defaultBaseURL
-	}
-	return c.BaseURL
+func (c *Client) Init() {
+	c.onInit.Do(func() {
+		if c.BaseURL == "" {
+			c.BaseURL = defaultBaseURL
+		}
+		if c.HTTPClient == nil {
+			// GPT4 is very slow, a long timeout sadly is necessary
+			c.HTTPClient = &http.Client{Timeout: 5 * time.Minute}
+		}
+		if c.RetryStrategy == nil {
+			c.RetryStrategy = DefaultRetryStrategy
+		}
+		c.HTTPClient.Transport = httpkit.RetryRoundTripper{
+			Transport: zerokit.Coalesce[http.RoundTripper](
+				c.HTTPClient.Transport, http.DefaultTransport),
+			RetryStrategy: c.RetryStrategy,
+		}
+	})
 }
 
 // getAPIKey returns the API key for authentication.
@@ -77,16 +85,8 @@ func (c *Client) getAPIKey() string {
 }
 
 func (c *Client) getHTTPClient() *http.Client {
-	if c.HTTPClient != nil {
-		return c.HTTPClient
-	}
-	return &http.Client{
-		Transport: httpkit.RetryRoundTripper{
-			Transport:     http.DefaultTransport,
-			RetryStrategy: c.getRetryStrategy(),
-		},
-		Timeout: 30 * time.Second,
-	}
+	c.Init()
+	return c.HTTPClient
 }
 
 type ChatSession struct {
@@ -238,6 +238,8 @@ type Choice struct {
 }
 
 func (c *Client) ChatSession(ctx context.Context, session ChatSession) (ChatSession, error) {
+	c.Init()
+
 	// Create a deep copy of the original ChatSession's Messages to avoid modifying it
 	session = session.Clone()
 
@@ -270,6 +272,8 @@ call:
 }
 
 func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletionRequest) (ChatCompletionResponse, error) {
+	c.Init()
+
 	var reply ChatCompletionResponse
 
 	jsonPayload, err := json.Marshal(cc)
@@ -277,7 +281,7 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletionRequest) (
 		return reply, err
 	}
 
-	uri := c.getBaseURL() + "/v1/chat/completions"
+	uri := c.BaseURL + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", uri, bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return reply, err
