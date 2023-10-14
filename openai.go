@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/adamluzsi/frameless/pkg/enum"
 	"github.com/adamluzsi/frameless/pkg/errorkit"
 	"github.com/adamluzsi/frameless/pkg/httpkit"
+	"github.com/adamluzsi/frameless/pkg/logger"
 	"github.com/adamluzsi/frameless/pkg/retry"
 	"github.com/adamluzsi/frameless/pkg/zerokit"
 	"io"
@@ -16,6 +18,8 @@ import (
 	"sync"
 	"time"
 )
+
+var globlock sync.RWMutex
 
 const defaultBaseURL = "https://api.openai.com"
 
@@ -47,6 +51,8 @@ type Client struct {
 	RetryStrategy retry.Strategy
 
 	onInit sync.Once
+
+	functionMapping map[ChatFunctionName]ChatFunctionMapping
 }
 
 var DefaultRetryStrategy retry.Strategy = retry.Jitter{
@@ -95,6 +101,16 @@ type ChatSession struct {
 
 	// Messages is an array of ChatMessage structs representing the conversation history.
 	Messages []ChatMessage `json:"messages"`
+
+	// Functions is an array of Function objects that describe the functions
+	// available for the GPT model to call during the chat completion.
+	// Each Function object should contain details like the function's name,
+	// description, and parameters. The GPT model will use this information
+	// to decide whether to call a function based on the user's query.
+	// For example, you can define functions like send_email(to: string, body: string)
+	// or get_current_weather(location: string, unit: 'celsius' | 'fahrenheit').
+	// Note: Defining functions will count against the model's token limit.
+	Functions []ChatFunction
 }
 
 func (session ChatSession) Clone() ChatSession {
@@ -129,6 +145,13 @@ func (session ChatSession) LastAssistantContent() string {
 		}
 	}
 	return ""
+}
+
+func (session ChatSession) LookupLastMessage() (ChatMessage, bool) {
+	if len(session.Messages) == 0 {
+		return ChatMessage{}, false
+	}
+	return session.Messages[len(session.Messages)-1], true
 }
 
 // ChatCompletionRequest represents the parameters for a chat completion request.
@@ -170,14 +193,48 @@ type ChatCompletionRequest struct {
 	// SessionID is an optional identifier for the session, used for fine-tuned models.
 	// Optional; if not provided, the API will not maintain context between API calls.
 	SessionID string `json:"session_id,omitempty"`
+
+	// Functions is an array of Function objects that describe the functions
+	// available for the GPT model to call during the chat completion.
+	// Each Function object should contain details like the function's name,
+	// description, and parameters. The GPT model will use this information
+	// to decide whether to call a function based on the user's query.
+	// For example, you can define functions like send_email(to: string, body: string)
+	// or get_current_weather(location: string, unit: 'celsius' | 'fahrenheit').
+	// Note: Defining functions will count against the model's token limit.
+	Functions []ChatFunction `json:"functions,omitempty"`
+
+	// FunctionCall is a string that specifies the behavior of function calling
+	// during the chat completion. It can have the following values:
+	// - "auto": The model decides whether to call a function and which function to call.
+	// - "none": Forces the model to not call any function.
+	// - { "name": "<function_name>" }: Forces the model to call a specific function by name.
+	// This field allows you to control the model's decision-making process regarding
+	// function calls, providing a way to either automate or manually control actions.
+	// When left nil, it is interpreted as "auto" on OpenAI API side.
+	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
+}
+
+// cloneMessages makes it safe to manipulate the []ChatMessages list in the ChatCompletionRequest.
+func (ccr *ChatCompletionRequest) cloneMessages() {
+	msgs := make([]ChatMessage, len(ccr.Messages))
+	copy(msgs, ccr.Messages)
+	ccr.Messages = msgs
 }
 
 type ChatMessageRole string
 
 const (
-	SystemChatMessageRole    ChatMessageRole = "system"
-	UserChatMessageRole      ChatMessageRole = "user"
+	// SystemChatMessageRole is a prompt meant to instrument the Assistant.
+	SystemChatMessageRole ChatMessageRole = "system"
+	// UserChatMessageRole is a user prompt input.
+	UserChatMessageRole ChatMessageRole = "user"
+	// AssistantChatMessageRole is a reply type.
+	// GPT for example uses the AssistantChatMessageRole to reply back to its caller.
 	AssistantChatMessageRole ChatMessageRole = "assistant"
+	// FunctionChatMessageRole is used to respond back
+	// to a function call request by the AssistantChatMessageRole.
+	FunctionChatMessageRole ChatMessageRole = "function"
 )
 
 // ChatMessage represents a single message in the conversation history.
@@ -187,6 +244,11 @@ type ChatMessage struct {
 
 	// Content contains the actual text of the message.
 	Content string `json:"content"`
+
+	// FunctionName is required when Role is FunctionChatMessageRole.
+	FunctionName ChatFunctionName `json:"name,omitempty"`
+	// FunctionCall is populated in a response when GPT requires a function execution.
+	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
 }
 
 // ChatCompletionResponse represents the response from a chat completion request.
@@ -230,7 +292,7 @@ type Choice struct {
 	// FinishReason is the reason the API stopped generating further tokens.
 	// Common values are "stop", "length", etc.
 	// Example: "stop"
-	FinishReason string `json:"finish_reason"`
+	FinishReason FinishReason `json:"finish_reason"`
 
 	// Index is the index of the choice in the array.
 	// Example: 0
@@ -240,13 +302,20 @@ type Choice struct {
 func (c *Client) ChatSession(ctx context.Context, session ChatSession) (ChatSession, error) {
 	c.Init()
 
+	for _, fn := range session.Functions {
+		if err := fn.Validate(); err != nil {
+			return ChatSession{}, err
+		}
+	}
+
 	// Create a deep copy of the original ChatSession's Messages to avoid modifying it
 	session = session.Clone()
 
 call:
 	response, err := c.ChatCompletion(ctx, ChatCompletionRequest{
-		Model:    session.Model,
-		Messages: session.Messages,
+		Model:     session.Model,
+		Messages:  session.Messages,
+		Functions: session.Functions,
 	})
 
 	if errors.Is(err, ErrContextLengthExceeded) {
@@ -268,58 +337,115 @@ call:
 		session.Messages = append(session.Messages, choice.Message)
 	}
 
+	if 0 < len(response.Choices) {
+		lastChoice := response.Choices[len(response.Choices)-1]
+
+		if lastChoice.FinishReason == FinishReasonFunctionCall &&
+			lastChoice.Message.FunctionCall != nil {
+			fnCall := *lastChoice.Message.FunctionCall
+
+			for _, fn := range session.Functions {
+				if fn.Name == fnCall.Name && fn.Exec != nil {
+
+					result, fnErr := fn.Exec(ctx, json.RawMessage(fnCall.Arguments))
+					if fnErr != nil { // if the function encountered an error, GPT needs to know about it.
+						logger.Warn(ctx, "function execution encountered an error",
+							logger.Field("functionName", fn.Name),
+							logger.ErrField(fnErr))
+						message, err := MakeFunctionChatMessage(fn.Name, functionErrorContent{
+							Error: fnErr.Error(),
+						})
+						if err != nil { // if the encoding had an error, the developer has to know about it
+							return session, err
+						}
+						session.Messages = append(session.Messages, message)
+						goto call
+					}
+
+					message, err := MakeFunctionChatMessage(fn.Name, result)
+					if err != nil { // if the encoding had an error, the developer has to know about it
+						return session, err
+					}
+					session.Messages = append(session.Messages, message)
+					goto call
+				}
+			}
+		}
+	}
+
 	return session, nil
 }
 
 func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletionRequest) (ChatCompletionResponse, error) {
 	c.Init()
 
-	var reply ChatCompletionResponse
+	if cc.Functions != nil {
+		cc.Messages = append([]ChatMessage{fixFunctionHallucinationMessage}, cc.Messages...)
 
+		for i, fn := range cc.Functions {
+			var required = make(map[string]struct{})
+			for _, req := range fn.Parameters.Required {
+				required[req] = struct{}{}
+			}
+			for name, prop := range fn.Parameters.Properties {
+				if prop.Required {
+					required[name] = struct{}{}
+				}
+			}
+			var requiredProperties []string
+			for prop := range required {
+				requiredProperties = append(requiredProperties, prop)
+			}
+			cc.Functions[i].Parameters.Required = requiredProperties
+		}
+	}
+
+	var response ChatCompletionResponse
 	jsonPayload, err := json.Marshal(cc)
 	if err != nil {
-		return reply, err
+		return response, err
 	}
 
 	uri := c.BaseURL + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", uri, bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		return reply, err
+		return response, err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Authorization", "Bearer "+c.getAPIKey())
+	req.Header.Set("Accept", "application/json; charset=utf-8")
 
-	client := c.getHTTPClient()
-
-	resp, err := client.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return reply, err
+		return response, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return reply, err
+		return response, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp errorResponse
 		if err := json.Unmarshal(body, &errResp); err != nil {
-			return reply, err
+			return response, err
 		}
 		if errResp.Error.Code == errorCodeContextLengthExceeded {
-			return reply, fmt.Errorf("%w: %s",
-				ErrContextLengthExceeded, errResp.Error.Message)
+			return response, fmt.Errorf("%w: %s",
+				ErrContextLengthExceeded,
+				errResp.Error.Message)
 		}
-		return reply, fmt.Errorf(errResp.Error.Message)
+		return response, fmt.Errorf("%s: %s",
+			errResp.Error.Code, errResp.Error.Message)
 	}
 
-	if err := json.Unmarshal(body, &reply); err != nil {
-		return reply, err
+	if err := json.Unmarshal(body, &response); err != nil {
+		return response, err
 	}
 
-	return reply, nil
+	return response, nil
 }
 
 type errorResponse struct {
@@ -334,3 +460,97 @@ type errorResponse struct {
 const errorCodeContextLengthExceeded = "context_length_exceeded"
 
 const ErrContextLengthExceeded errorkit.Error = "ErrContextLengthExceeded"
+
+// Chat Function
+
+type ChatFunctionParameterProperties struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Enum        []string `json:"enum,omitempty"`
+	Required    bool     `json:"-"`
+}
+
+type ChatFunctionParameters struct {
+	Type       string                                     `json:"type"`
+	Properties map[string]ChatFunctionParameterProperties `json:"properties"`
+	// Required mark wich property is required.
+	// It gets auto populated from the properties flagged as "Required"
+	Required []string `json:"required,omitempty"`
+}
+
+type ChatFunction struct {
+	Name        ChatFunctionName       `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  ChatFunctionParameters `json:"parameters"`
+
+	Exec func(ctx context.Context, payload json.RawMessage) (any, error) `json:"-"`
+}
+
+func (cfn ChatFunction) Validate() error {
+	if cfn.Exec == nil {
+		return ErrFunctionMissingExec
+	}
+	return nil
+}
+
+const ErrFunctionMissingExec errorkit.Error = "ErrFunctionMissingExec: Your function declaration is missing the execution function"
+
+type ChatFunctionName string
+
+// ChatFunctionCall is the request that the Assistant asks from us to complete.
+type ChatFunctionCall struct {
+	Name ChatFunctionName `json:"name,omitempty"`
+	// Arguments is a JSON encoded call function with arguments in JSON format
+	Arguments string `json:"arguments,omitempty"`
+}
+
+const FixFunctionHallucination = "Only use the functions you have been provided with." // System
+
+var fixFunctionHallucinationMessage = ChatMessage{
+	Role:    SystemChatMessageRole,
+	Content: FixFunctionHallucination,
+}
+
+func MakeFunctionChatMessage(name ChatFunctionName, contentDTO any) (ChatMessage, error) {
+	data, err := json.Marshal(contentDTO)
+	if err != nil {
+		return ChatMessage{}, err
+	}
+	return ChatMessage{
+		Role:         FunctionChatMessageRole,
+		Content:      string(data),
+		FunctionName: name,
+	}, nil
+}
+
+type functionErrorContent struct {
+	Error string `json:"error"`
+}
+
+type FinishReason string
+
+const (
+	FinishReasonStop          FinishReason = "stop"
+	FinishReasonLength        FinishReason = "length"
+	FinishReasonFunctionCall  FinishReason = "function_call"
+	FinishReasonContentFilter FinishReason = "content_filter"
+	FinishReasonNull          FinishReason = "null"
+)
+
+var _ = enum.Register[FinishReason](
+	FinishReasonStop,
+	FinishReasonLength,
+	FinishReasonFunctionCall,
+	FinishReasonContentFilter,
+	FinishReasonNull,
+)
+
+type ChatFunctionMapping interface {
+	GetParameters() ChatFunctionParameters
+	Call(ChatFunctionCall) (ChatMessage, error)
+}
+
+type chatFunctionMapping[Fn any] struct {
+	getParameters func() ChatFunctionParameters
+	callFunc      func(ChatFunctionCall) func(ChatMessage, error)
+}

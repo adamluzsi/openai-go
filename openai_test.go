@@ -271,3 +271,229 @@ func TestClient_ChatCompletion_contextWithError(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, ctx.Err())
 }
+
+func TestChatFunctionCall_json(t *testing.T) {
+	v := openai.ChatFunctionCall{
+		Name:      "foo-bar-baz",
+		Arguments: `{"hello":"world!"}`,
+	}
+
+	data, err := json.Marshal(v)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, data)
+
+	var got openai.ChatFunctionCall
+	assert.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, v, got)
+}
+
+func TestClient_ChatCompletion_functions(t *testing.T) {
+	client := openai.Client{}
+
+	type WeatherRequestDTO struct {
+		Country string `json:"country"`
+		City    string `json:"city"`
+	}
+
+	const funcName = "current-weather"
+	functions := []openai.ChatFunction{
+		{
+			Name:        funcName,
+			Description: "Retrieve the current weather.",
+			Parameters: openai.ChatFunctionParameters{
+				Type: "object",
+				Properties: map[string]openai.ChatFunctionParameterProperties{
+					"country": {
+						Type:        "string",
+						Description: "The city's name where the weather should be checked",
+						Required:    true,
+					},
+					"city": {
+						Type:        "string",
+						Description: "the city's name where the weather should be checked",
+					},
+				},
+				Required: []string{"city"},
+			},
+			Exec: func(ctx context.Context, payload json.RawMessage) (any, error) {
+				var dto WeatherRequestDTO
+				if err := json.Unmarshal(payload, &dto); err != nil {
+					return nil, err
+				}
+				return map[string]any{"weather": "sunny"}, nil
+			},
+		},
+	}
+
+	req := openai.ChatCompletionRequest{
+		Model: CheapestChatModel,
+		Messages: []openai.ChatMessage{
+			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
+			{Role: openai.UserChatMessageRole, Content: "How's the current weather in Zürich?"},
+		},
+		Functions: functions,
+	}
+
+	ctx := context.Background()
+
+	resp, err := client.ChatCompletion(ctx, req)
+	assert.NoError(t, err)
+
+	var (
+		fnCall openai.ChatFunctionCall
+		reply  openai.ChatMessage
+	)
+	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
+		it.Must.Equal(got.Message.Role, openai.AssistantChatMessageRole)
+		it.Must.NotNil(got.Message.FunctionCall)
+		assert.Equal(t, got.Message.FunctionCall.Name, funcName)
+		reply = got.Message
+		fnCall = *got.Message.FunctionCall
+	})
+
+	req.Messages = append(req.Messages, reply)
+
+	args := make(map[string]any)
+	assert.NoError(t, json.Unmarshal([]byte(fnCall.Arguments), &args))
+	var keys []string
+	for key, val := range args {
+		assert.NotEmpty(t, val)
+		keys = append(keys, key)
+	}
+	assert.ContainExactly(t, keys, []string{"country", "city"})
+
+	req.Messages = append(req.Messages, openai.ChatMessage{
+		Role:         openai.FunctionChatMessageRole,
+		FunctionName: funcName,
+		Content:      `{"weather":"sunny"}`,
+	})
+
+	resp, err = client.ChatCompletion(ctx, req)
+	assert.NoError(t, err)
+
+	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
+		it.Must.Equal(got.Message.Role, openai.AssistantChatMessageRole)
+		it.Must.Contain(got.Message.Content, "sunny")
+		it.Must.Contain(got.Message.Content, "Zürich")
+	})
+}
+
+func TestChatSession_functions(t *testing.T) {
+	client := openai.Client{}
+
+	type WeatherRequestDTO struct {
+		Country string `json:"country"`
+		City    string `json:"city"`
+	}
+
+	const funcName = "current-weather"
+	functions := []openai.ChatFunction{
+		{
+			Name:        funcName,
+			Description: "Retrieve the current weather.",
+			Parameters: openai.ChatFunctionParameters{
+				Type: "object",
+				Properties: map[string]openai.ChatFunctionParameterProperties{
+					"country": {
+						Type:        "string",
+						Description: "The city's name where the weather should be checked",
+						Required:    true,
+					},
+					"city": {
+						Type:        "string",
+						Description: "the city's name where the weather should be checked",
+					},
+				},
+				Required: []string{"city"},
+			},
+			Exec: func(ctx context.Context, payload json.RawMessage) (any, error) {
+				var dto WeatherRequestDTO
+				if err := json.Unmarshal(payload, &dto); err != nil {
+					return nil, err
+				}
+				return map[string]any{"weather": "sunny"}, nil
+			},
+		},
+	}
+
+	session := openai.ChatSession{
+		Model: CheapestChatModel,
+		Messages: []openai.ChatMessage{
+			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
+			{Role: openai.UserChatMessageRole, Content: "How's the current weather in Zürich?"},
+		},
+		Functions: functions,
+	}
+
+	ctx := context.Background()
+
+	session, err := client.ChatSession(ctx, session)
+	assert.NoError(t, err)
+
+	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
+		it.Must.Equal(got.Role, openai.AssistantChatMessageRole)
+		it.Must.NotNil(got.FunctionCall)
+		assert.Equal(t, got.FunctionCall.Name, funcName)
+
+		args := make(map[string]any)
+		it.Must.NoError(json.Unmarshal([]byte(got.FunctionCall.Arguments), &args))
+		var keys []string
+		for key, val := range args {
+			assert.NotEmpty(t, val)
+			keys = append(keys, key)
+		}
+		assert.ContainExactly(t, keys, []string{"country", "city"})
+	})
+
+	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
+		it.Must.Equal(got.Role, openai.AssistantChatMessageRole)
+		it.Must.Contain(got.Content, "sunny")
+		it.Must.Contain(got.Content, "Zürich")
+	})
+}
+
+func TestChatSession_functions_ExecRequired(t *testing.T) {
+	client := openai.Client{BaseURL: "https://go.llib.dev"}
+
+	type WeatherRequestDTO struct {
+		Country string `json:"country"`
+		City    string `json:"city"`
+	}
+
+	const funcName = "current-weather"
+	functions := []openai.ChatFunction{
+		{
+			Name:        funcName,
+			Description: "Retrieve the current weather.",
+			Parameters: openai.ChatFunctionParameters{
+				Type: "object",
+				Properties: map[string]openai.ChatFunctionParameterProperties{
+					"country": {
+						Type:        "string",
+						Description: "The city's name where the weather should be checked",
+						Required:    true,
+					},
+					"city": {
+						Type:        "string",
+						Description: "the city's name where the weather should be checked",
+					},
+				},
+				Required: []string{"city"},
+			},
+		},
+	}
+
+	session := openai.ChatSession{
+		Model: CheapestChatModel,
+		Messages: []openai.ChatMessage{
+			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
+			{Role: openai.UserChatMessageRole, Content: "How's the current weather in Zürich?"},
+		},
+		Functions: functions,
+	}
+
+	ctx := context.Background()
+
+	_, err := client.ChatSession(ctx, session)
+	assert.ErrorIs(t, err, openai.ErrFunctionMissingExec)
+}
