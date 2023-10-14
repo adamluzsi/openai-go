@@ -300,9 +300,9 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
-			Parameters: openai.ChatFunctionParameters{
+			Parameters: openai.ChatFunctionParameterSchema{
 				Type: "object",
-				Properties: map[string]openai.ChatFunctionParameterProperties{
+				Properties: map[string]openai.ChatFunctionParameterProperty{
 					"country": {
 						Type:        "string",
 						Description: "The city's name where the weather should be checked",
@@ -382,8 +382,9 @@ func TestChatSession_functions(t *testing.T) {
 	client := openai.Client{}
 
 	type WeatherRequestDTO struct {
-		Country string `json:"country"`
-		City    string `json:"city"`
+		Country     string   `json:"country"`
+		City        string   `json:"city"`
+		Temperature []string `json:"temperature"`
 	}
 
 	const funcName = "current-weather"
@@ -391,9 +392,9 @@ func TestChatSession_functions(t *testing.T) {
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
-			Parameters: openai.ChatFunctionParameters{
+			Parameters: openai.ChatFunctionParameterSchema{
 				Type: "object",
-				Properties: map[string]openai.ChatFunctionParameterProperties{
+				Properties: map[string]openai.ChatFunctionParameterProperty{
 					"country": {
 						Type:        "string",
 						Description: "The city's name where the weather should be checked",
@@ -403,6 +404,15 @@ func TestChatSession_functions(t *testing.T) {
 						Type:        "string",
 						Description: "the city's name where the weather should be checked",
 					},
+					"temperature": {
+						Type:        "array",
+						Description: "defines what temperate units should be used",
+						Items: &openai.ChatFunctionParameterPropertyItems{
+							Type: "string",
+							Enum: []string{"celsius", "fahrenheit"},
+						},
+						Required: true,
+					},
 				},
 				Required: []string{"city"},
 			},
@@ -411,7 +421,19 @@ func TestChatSession_functions(t *testing.T) {
 				if err := json.Unmarshal(payload, &dto); err != nil {
 					return nil, err
 				}
-				return map[string]any{"weather": "sunny"}, nil
+				assert.Should(t).NotEmpty(dto)
+				return map[string]any{
+					"weather": "sunny",
+					"temperature": map[string]any{
+						"value": 42,
+						"metric": func() string {
+							for _, metric := range dto.Temperature {
+								return metric
+							}
+							return "celsius"
+						}(),
+					},
+				}, nil
 			},
 		},
 	}
@@ -442,7 +464,7 @@ func TestChatSession_functions(t *testing.T) {
 			assert.NotEmpty(t, val)
 			keys = append(keys, key)
 		}
-		assert.ContainExactly(t, keys, []string{"country", "city"})
+		assert.ContainExactly(t, keys, []string{"country", "city", "temperature"})
 	})
 
 	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
@@ -465,9 +487,9 @@ func TestChatSession_functions_ExecRequired(t *testing.T) {
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
-			Parameters: openai.ChatFunctionParameters{
+			Parameters: openai.ChatFunctionParameterSchema{
 				Type: "object",
-				Properties: map[string]openai.ChatFunctionParameterProperties{
+				Properties: map[string]openai.ChatFunctionParameterProperty{
 					"country": {
 						Type:        "string",
 						Description: "The city's name where the weather should be checked",

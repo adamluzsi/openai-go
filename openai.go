@@ -463,25 +463,33 @@ const ErrContextLengthExceeded errorkit.Error = "ErrContextLengthExceeded"
 
 // Chat Function
 
-type ChatFunctionParameterProperties struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Enum        []string `json:"enum,omitempty"`
-	Required    bool     `json:"-"`
-}
-
-type ChatFunctionParameters struct {
-	Type       string                                     `json:"type"`
-	Properties map[string]ChatFunctionParameterProperties `json:"properties"`
+type ChatFunctionParameterSchema struct {
+	Type       string                                   `json:"type"`
+	Properties map[string]ChatFunctionParameterProperty `json:"properties"`
 	// Required mark wich property is required.
-	// It gets auto populated from the properties flagged as "Required"
+	// It gets autopopulated from the properties flagged as "Required"
 	Required []string `json:"required,omitempty"`
 }
 
+type ChatFunctionParameterProperty struct {
+	Type        string                              `json:"type"`
+	Description string                              `json:"description"`
+	Enum        []string                            `json:"enum,omitempty"`
+	Items       *ChatFunctionParameterPropertyItems `json:"items,omitempty"`
+	Required    bool                                `json:"-"`
+}
+
+type ChatFunctionParameterPropertyItems struct {
+	// Type specifies the data type of the elements. Common types include "string", "number", "integer", "boolean", "array", and "object".
+	Type string `json:"type"`
+	// Enum specifies the set of allowed values for the elements.
+	Enum []string `json:"enum,omitempty"`
+}
+
 type ChatFunction struct {
-	Name        ChatFunctionName       `json:"name"`
-	Description string                 `json:"description"`
-	Parameters  ChatFunctionParameters `json:"parameters"`
+	Name        ChatFunctionName            `json:"name"`
+	Description string                      `json:"description"`
+	Parameters  ChatFunctionParameterSchema `json:"parameters"`
 
 	Exec func(ctx context.Context, payload json.RawMessage) (any, error) `json:"-"`
 }
@@ -546,11 +554,11 @@ var _ = enum.Register[FinishReason](
 )
 
 type ChatFunctionMapping interface {
-	GetParameters() ChatFunctionParameters
+	GetParameters() ChatFunctionParameterSchema
 	Call(ChatFunctionCall) (ChatMessage, error)
 }
 
 type chatFunctionMapping[Fn any] struct {
-	getParameters func() ChatFunctionParameters
+	getParameters func() ChatFunctionParameterSchema
 	callFunc      func(ChatFunctionCall) func(ChatMessage, error)
 }
