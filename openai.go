@@ -514,7 +514,11 @@ type ChatFunctionCall struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
-const FixFunctionHallucination = "Only use the functions you have been provided with." // System
+// System
+const FixFunctionHallucination = `
+Only use the functions you have been provided with.
+You must use JSON format for the argument to make a function call. 
+`
 
 var fixFunctionHallucinationMessage = ChatMessage{
 	Role:    SystemChatMessageRole,
