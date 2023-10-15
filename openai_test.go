@@ -300,9 +300,9 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
-			Parameters: openai.ChatFunctionParameterSchema{
+			Parameters: openai.JSONSchema{
 				Type: "object",
-				Properties: map[string]openai.ChatFunctionParameterProperty{
+				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
 						Description: "The city's name where the weather should be checked",
@@ -392,9 +392,9 @@ func TestChatSession_functions(t *testing.T) {
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
-			Parameters: openai.ChatFunctionParameterSchema{
+			Parameters: openai.JSONSchema{
 				Type: "object",
-				Properties: map[string]openai.ChatFunctionParameterProperty{
+				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
 						Description: "The city's name where the weather should be checked",
@@ -407,7 +407,7 @@ func TestChatSession_functions(t *testing.T) {
 					"temperature": {
 						Type:        "array",
 						Description: "defines what temperate units should be used",
-						Items: &openai.ChatFunctionParameterPropertyItems{
+						Items: &openai.JSONSchemaItems{
 							Type: "string",
 							Enum: []string{"celsius", "fahrenheit"},
 						},
@@ -487,9 +487,9 @@ func TestChatSession_functions_ExecRequired(t *testing.T) {
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
-			Parameters: openai.ChatFunctionParameterSchema{
+			Parameters: openai.JSONSchema{
 				Type: "object",
-				Properties: map[string]openai.ChatFunctionParameterProperty{
+				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
 						Description: "The city's name where the weather should be checked",
