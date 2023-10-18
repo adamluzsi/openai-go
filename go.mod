@@ -2,6 +2,7 @@ module go.llib.dev/openai
 
 go 1.20
 
-require github.com/adamluzsi/frameless v0.166.0
-
-require github.com/adamluzsi/testcase v0.142.1 // indirect
+require (
+	go.llib.dev/frameless v0.167.4
+	go.llib.dev/testcase v0.144.0
+)

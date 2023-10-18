@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/adamluzsi/frameless/pkg/enum"
-	"github.com/adamluzsi/frameless/pkg/errorkit"
-	"github.com/adamluzsi/frameless/pkg/httpkit"
-	"github.com/adamluzsi/frameless/pkg/logger"
-	"github.com/adamluzsi/frameless/pkg/retry"
-	"github.com/adamluzsi/frameless/pkg/zerokit"
+	"go.llib.dev/frameless/pkg/enum"
+	"go.llib.dev/frameless/pkg/errorkit"
+	"go.llib.dev/frameless/pkg/httpkit"
+	"go.llib.dev/frameless/pkg/logger"
+	"go.llib.dev/frameless/pkg/retry"
+	"go.llib.dev/frameless/pkg/zerokit"
 	"io"
 	"net/http"
 	"os"
@@ -97,10 +97,10 @@ func (c *Client) getHTTPClient() *http.Client {
 
 type ChatSession struct {
 	// Model specifies the ID of the model to use (e.g., "text-davinci-002").
-	Model ChatModelID `json:"model"`
+	Model ChatModelID
 
 	// Messages is an array of ChatMessage structs representing the conversation history.
-	Messages []ChatMessage `json:"messages"`
+	Messages []ChatMessage
 
 	// Functions is an array of Function objects that describe the functions
 	// available for the GPT model to call during the chat completion.
@@ -111,6 +111,10 @@ type ChatSession struct {
 	// or get_current_weather(location: string, unit: 'celsius' | 'fahrenheit').
 	// Note: Defining functions will count against the model's token limit.
 	Functions []ChatFunction
+
+	// Temperature controls the randomness of the output
+	// What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.
+	Temperature *float64
 }
 
 func (session ChatSession) Clone() ChatSession {
@@ -313,9 +317,10 @@ func (c *Client) ChatSession(ctx context.Context, session ChatSession) (ChatSess
 
 call:
 	response, err := c.ChatCompletion(ctx, ChatCompletionRequest{
-		Model:     session.Model,
-		Messages:  session.Messages,
-		Functions: session.Functions,
+		Model:       session.Model,
+		Messages:    session.Messages,
+		Functions:   session.Functions,
+		Temperature: session.Temperature,
 	})
 
 	if errors.Is(err, ErrContextLengthExceeded) {

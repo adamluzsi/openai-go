@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/adamluzsi/testcase"
-	"github.com/adamluzsi/testcase/clock/timecop"
-	"github.com/adamluzsi/testcase/let"
-	"github.com/adamluzsi/testcase/random"
+	"go.llib.dev/frameless/pkg/pointer"
 	"go.llib.dev/openai"
+	"go.llib.dev/testcase"
+	"go.llib.dev/testcase/clock/timecop"
+	"go.llib.dev/testcase/let"
+	"go.llib.dev/testcase/pp"
+	"go.llib.dev/testcase/random"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/adamluzsi/testcase/assert"
+	"go.llib.dev/testcase/assert"
 )
 
 const (
@@ -253,6 +255,44 @@ func TestClient_ChatSession_contextWithError(t *testing.T) {
 		WithSystemMessage("You are a helpful assistant."))
 
 	assert.ErrorIs(t, err, ctx.Err())
+}
+
+func TestClient_ChatSession_wTemperature(t *testing.T) {
+	ctx := context.Background()
+	client := &openai.Client{}
+	ses := openai.ChatSession{Model: CheapestChatModel}.
+		WithSystemMessage("You are a helpful assistant.").
+		WithAssistantMessage("random selection task, choose between 1 or 2")
+
+	t.Run("no temperature", func(t *testing.T) {
+		ses, err := client.ChatSession(ctx, ses)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, ses.LastAssistantContent())
+	})
+
+	t.Run("valid temperature", func(t *testing.T) {
+		ses := ses
+		ses.Temperature = pointer.Of(0.0)
+		ses, err := client.ChatSession(ctx, ses)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, ses.LastAssistantContent())
+	})
+
+	t.Run("max temperature", func(t *testing.T) {
+		ses := ses
+		ses.Temperature = pointer.Of(2.0)
+		ses, err := client.ChatSession(ctx, ses)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, ses.LastAssistantContent())
+	})
+
+	t.Run("invalid (too high) temperature", func(t *testing.T) {
+		ses := ses
+		ses.Temperature = pointer.Of(2.1)
+		ses, err := client.ChatSession(ctx, ses)
+		pp.PP(ses, err)
+		assert.Error(t, err, "was expected to receive an error due to the too big temperature number (2.0 is the max)")
+	})
 }
 
 func TestClient_ChatCompletion_contextWithError(t *testing.T) {
