@@ -95,40 +95,23 @@ func (c *Client) getHTTPClient() *http.Client {
 	return c.HTTPClient
 }
 
-type ChatSession struct {
-	// Model specifies the ID of the model to use (e.g., "text-davinci-002").
-	Model ChatModelID
-
-	// Messages is an array of ChatMessage structs representing the conversation history.
-	Messages []ChatMessage
-
-	// Functions is an array of Function objects that describe the functions
-	// available for the GPT model to call during the chat completion.
-	// Each Function object should contain details like the function's name,
-	// description, and parameters. The GPT model will use this information
-	// to decide whether to call a function based on the user's query.
-	// For example, you can define functions like send_email(to: string, body: string)
-	// or get_current_weather(location: string, unit: 'celsius' | 'fahrenheit').
-	// Note: Defining functions will count against the model's token limit.
-	Functions []ChatFunction
-
-	// Temperature controls the randomness of the output
-	// What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.
-	Temperature *float64
-}
+type ChatSession struct{ ChatCompletion }
 
 func (session ChatSession) Clone() ChatSession {
-	msgsCopy := make([]ChatMessage, len(session.Messages))
-	copy(msgsCopy, session.Messages)
-	session.Messages = msgsCopy
+	session.ChatCompletion = session.ChatCompletion.Clone()
+	return session
+}
+
+func (session ChatSession) WithModel(model ChatModelID) ChatSession {
+	session.Model = model
 	return session
 }
 
 func (session ChatSession) withMessage(role ChatMessageRole, content string) ChatSession {
-	session = session.Clone()
-	session.Messages = append(session.Messages, ChatMessage{Role: role, Content: content})
+	session.Messages = append(append([]ChatMessage{}, session.Messages...), ChatMessage{Role: role, Content: content})
 	return session
 }
+
 func (session ChatSession) WithSystemMessage(content string) ChatSession {
 	return session.withMessage(SystemChatMessageRole, content)
 }
@@ -158,8 +141,14 @@ func (session ChatSession) LookupLastMessage() (ChatMessage, bool) {
 	return session.Messages[len(session.Messages)-1], true
 }
 
-// ChatCompletionRequest represents the parameters for a chat completion request.
-type ChatCompletionRequest struct {
+func (session ChatSession) WithFunction(fns ...ChatFunction) ChatSession {
+	session.ChatCompletion.Functions = cloneSlice(session.ChatCompletion.Functions)
+	session.ChatCompletion.Functions = append(session.ChatCompletion.Functions, fns...)
+	return session
+}
+
+// ChatCompletion represents the parameters for a chat completion request.
+type ChatCompletion struct {
 	// Model specifies the ID of the model to use (e.g., "text-davinci-002").
 	Model ChatModelID `json:"model"`
 
@@ -219,11 +208,39 @@ type ChatCompletionRequest struct {
 	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
 }
 
-// cloneMessages makes it safe to manipulate the []ChatMessages list in the ChatCompletionRequest.
-func (ccr *ChatCompletionRequest) cloneMessages() {
-	msgs := make([]ChatMessage, len(ccr.Messages))
-	copy(msgs, ccr.Messages)
-	ccr.Messages = msgs
+func clonePointer[T any](ptr *T) *T {
+	if ptr == nil {
+		return ptr
+	}
+	v := *ptr
+	return &v
+}
+
+func cloneSlice[T any](vs []T) []T {
+	if vs == nil {
+		return vs
+	}
+	nvs := make([]T, len(vs))
+	copy(nvs, vs)
+	return nvs
+}
+
+// cloneMessages makes it safe to manipulate the []ChatMessages list in the ChatCompletion.
+func (cc *ChatCompletion) cloneMessages() {
+	cc.Messages = cloneSlice(cc.Messages)
+}
+
+func (cc ChatCompletion) Clone() ChatCompletion {
+	cc.cloneMessages()
+	cc.MaxTokens = clonePointer(cc.MaxTokens)
+	cc.Temperature = clonePointer(cc.Temperature)
+	cc.FrequencyPenalty = clonePointer(cc.FrequencyPenalty)
+	cc.PresencePenalty = clonePointer(cc.PresencePenalty)
+	cc.Functions = cloneSlice(cc.Functions)
+	cc.FunctionCall = clonePointer(cc.FunctionCall)
+	cc.TopP = clonePointer(cc.TopP)
+	cc.StopSequences = cloneSlice(cc.StopSequences)
+	return cc
 }
 
 type ChatMessageRole string
@@ -316,12 +333,7 @@ func (c *Client) ChatSession(ctx context.Context, session ChatSession) (ChatSess
 	session = session.Clone()
 
 call:
-	response, err := c.ChatCompletion(ctx, ChatCompletionRequest{
-		Model:       session.Model,
-		Messages:    session.Messages,
-		Functions:   session.Functions,
-		Temperature: session.Temperature,
-	})
+	response, err := c.ChatCompletion(ctx, session.ChatCompletion)
 
 	if errors.Is(err, ErrContextLengthExceeded) {
 		switch session.Model {
@@ -381,7 +393,7 @@ call:
 	return session, nil
 }
 
-func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletionRequest) (ChatCompletionResponse, error) {
+func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCompletionResponse, error) {
 	c.Init()
 
 	if cc.Functions != nil {

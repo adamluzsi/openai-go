@@ -9,7 +9,6 @@ import (
 	"go.llib.dev/testcase"
 	"go.llib.dev/testcase/clock/timecop"
 	"go.llib.dev/testcase/let"
-	"go.llib.dev/testcase/pp"
 	"go.llib.dev/testcase/random"
 	"math"
 	"net/http"
@@ -32,7 +31,7 @@ func TestClient_ChatCompletion_smoke(t *testing.T) {
 	client := &openai.Client{}
 
 	// Prepare a simple chat completion request
-	req := openai.ChatCompletionRequest{
+	req := openai.ChatCompletion{
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
 			{
@@ -65,7 +64,7 @@ func TestClient_ChatCompletion_smoke(t *testing.T) {
 }
 
 func TestChatSession_with(t *testing.T) {
-	session := openai.ChatSession{Model: CheapestChatModel}
+	session := openai.ChatSession{}.WithModel(CheapestChatModel)
 	original := session
 
 	assert.Equal(t, 0, len(session.Messages))
@@ -100,7 +99,8 @@ func TestChatSession_with(t *testing.T) {
 func TestClient_ChatSession_smoke(t *testing.T) {
 	client := &openai.Client{}
 
-	session := openai.ChatSession{Model: CheapestChatModel}.
+	session := openai.ChatSession{}.
+		WithModel(CheapestChatModel).
 		WithSystemMessage("You are a helpful assistant.").
 		WithUserMessage(fmt.Sprintf("please, reply back to me with '%s'", exampleToken)).
 		WithAssistantMessage(exampleToken).
@@ -124,7 +124,7 @@ func TestClient_ChatCompletion_errorRetry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&callCount, 1)
 		defer r.Body.Close()
-		var req openai.ChatCompletionRequest
+		var req openai.ChatCompletion
 		assert.Should(t).NoError(json.NewDecoder(r.Body).Decode(&req))
 		assert.Should(t).NotEmpty(req)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -134,7 +134,7 @@ func TestClient_ChatCompletion_errorRetry(t *testing.T) {
 	client := &openai.Client{BaseURL: srv.URL}
 
 	// Prepare a simple chat completion request
-	req := openai.ChatCompletionRequest{
+	req := openai.ChatCompletion{
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
 			{
@@ -171,7 +171,8 @@ func TestClient_ChatSession_automaticModelUpgradeOnTooLongToken(t *testing.T) {
 		initialModel = testcase.Let[openai.ChatModelID](s, nil)
 		tokens       = testcase.Let[[]string](s, nil)
 		session      = testcase.Let(s, func(t *testcase.T) openai.ChatSession {
-			return openai.ChatSession{Model: initialModel.Get(t)}.
+			return openai.ChatSession{}.
+				WithModel(initialModel.Get(t)).
 				WithUserMessage(strings.Join(tokens.Get(t), " "))
 		})
 	)
@@ -251,7 +252,8 @@ func TestClient_ChatSession_contextWithError(t *testing.T) {
 	cancel()
 
 	client := &openai.Client{}
-	_, err := client.ChatSession(ctx, openai.ChatSession{Model: CheapestChatModel}.
+	_, err := client.ChatSession(ctx, openai.ChatSession{}.
+		WithModel(CheapestChatModel).
 		WithSystemMessage("You are a helpful assistant."))
 
 	assert.ErrorIs(t, err, ctx.Err())
@@ -260,7 +262,8 @@ func TestClient_ChatSession_contextWithError(t *testing.T) {
 func TestClient_ChatSession_wTemperature(t *testing.T) {
 	ctx := context.Background()
 	client := &openai.Client{}
-	ses := openai.ChatSession{Model: CheapestChatModel}.
+	ses := openai.ChatSession{}.
+		WithModel(CheapestChatModel).
 		WithSystemMessage("You are a helpful assistant.").
 		WithAssistantMessage("random selection task, choose between 1 or 2")
 
@@ -290,7 +293,6 @@ func TestClient_ChatSession_wTemperature(t *testing.T) {
 		ses := ses
 		ses.Temperature = pointer.Of(2.1)
 		ses, err := client.ChatSession(ctx, ses)
-		pp.PP(ses, err)
 		assert.Error(t, err, "was expected to receive an error due to the too big temperature number (2.0 is the max)")
 	})
 }
@@ -300,7 +302,7 @@ func TestClient_ChatCompletion_contextWithError(t *testing.T) {
 	cancel()
 
 	client := &openai.Client{}
-	_, err := client.ChatCompletion(ctx, openai.ChatCompletionRequest{
+	_, err := client.ChatCompletion(ctx, openai.ChatCompletion{
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
 			{
@@ -365,7 +367,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 		},
 	}
 
-	req := openai.ChatCompletionRequest{
+	req := openai.ChatCompletion{
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
 			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
@@ -478,14 +480,11 @@ func TestChatSession_functions(t *testing.T) {
 		},
 	}
 
-	session := openai.ChatSession{
-		Model: CheapestChatModel,
-		Messages: []openai.ChatMessage{
-			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
-			{Role: openai.UserChatMessageRole, Content: "How's the current weather in Zürich?"},
-		},
-		Functions: functions,
-	}
+	session := openai.ChatSession{}.
+		WithModel(CheapestChatModel).
+		WithSystemMessage("You are a helpful assistant.").
+		WithUserMessage("How's the current weather in Zürich?").
+		WithFunction(functions...)
 
 	ctx := context.Background()
 
@@ -517,11 +516,6 @@ func TestChatSession_functions(t *testing.T) {
 func TestChatSession_functions_ExecRequired(t *testing.T) {
 	client := openai.Client{BaseURL: "https://go.llib.dev"}
 
-	type WeatherRequestDTO struct {
-		Country string `json:"country"`
-		City    string `json:"city"`
-	}
-
 	const funcName = "current-weather"
 	functions := []openai.ChatFunction{
 		{
@@ -545,14 +539,11 @@ func TestChatSession_functions_ExecRequired(t *testing.T) {
 		},
 	}
 
-	session := openai.ChatSession{
-		Model: CheapestChatModel,
-		Messages: []openai.ChatMessage{
-			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
-			{Role: openai.UserChatMessageRole, Content: "How's the current weather in Zürich?"},
-		},
-		Functions: functions,
-	}
+	session := openai.ChatSession{}.
+		WithModel(CheapestChatModel).
+		WithSystemMessage("You are a helpful assistant.").
+		WithUserMessage("How's the current weather in Zürich?").
+		WithFunction(functions...)
 
 	ctx := context.Background()
 
