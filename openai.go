@@ -107,27 +107,27 @@ func (session ChatSession) WithModel(model ChatModelID) ChatSession {
 	return session
 }
 
-func (session ChatSession) withMessage(role ChatMessageRole, content string) ChatSession {
-	session.Messages = append(append([]ChatMessage{}, session.Messages...), ChatMessage{Role: role, Content: content})
+func (session ChatSession) WithMessage(msgs ...ChatMessage) ChatSession {
+	session.Messages = append(append([]ChatMessage{}, session.Messages...), msgs...)
 	return session
 }
 
 func (session ChatSession) WithSystemMessage(content string) ChatSession {
-	return session.withMessage(SystemChatMessageRole, content)
+	return session.WithMessage(SystemChatMessage.From(content))
 }
 
 func (session ChatSession) WithUserMessage(content string) ChatSession {
-	return session.withMessage(UserChatMessageRole, content)
+	return session.WithMessage(UserChatMessage.From(content))
 }
 
 func (session ChatSession) WithAssistantMessage(content string) ChatSession {
-	return session.withMessage(AssistantChatMessageRole, content)
+	return session.WithMessage(AssistantChatMessage.From(content))
 }
 
 func (session ChatSession) LastAssistantContent() string {
 	for i := len(session.Messages) - 1; i >= 0; i-- {
 		msg := session.Messages[i]
-		if msg.Role == AssistantChatMessageRole {
+		if msg.Role == AssistantChatMessage {
 			return msg.Content
 		}
 	}
@@ -245,17 +245,21 @@ func (cc ChatCompletion) Clone() ChatCompletion {
 
 type ChatMessageRole string
 
+func (cmr ChatMessageRole) From(content string) ChatMessage {
+	return ChatMessage{Role: cmr, Content: content}
+}
+
 const (
-	// SystemChatMessageRole is a prompt meant to instrument the Assistant.
-	SystemChatMessageRole ChatMessageRole = "system"
-	// UserChatMessageRole is a user prompt input.
-	UserChatMessageRole ChatMessageRole = "user"
-	// AssistantChatMessageRole is a reply type.
-	// GPT for example uses the AssistantChatMessageRole to reply back to its caller.
-	AssistantChatMessageRole ChatMessageRole = "assistant"
-	// FunctionChatMessageRole is used to respond back
-	// to a function call request by the AssistantChatMessageRole.
-	FunctionChatMessageRole ChatMessageRole = "function"
+	// SystemChatMessage is a prompt meant to instrument the Assistant.
+	SystemChatMessage ChatMessageRole = "system"
+	// UserChatMessage is a user prompt input.
+	UserChatMessage ChatMessageRole = "user"
+	// AssistantChatMessage is a reply type.
+	// GPT for example uses the AssistantChatMessage to reply back to its caller.
+	AssistantChatMessage ChatMessageRole = "assistant"
+	// FunctionChatMessage is used to respond back
+	// to a function call request by the AssistantChatMessage.
+	FunctionChatMessage ChatMessageRole = "function"
 )
 
 // ChatMessage represents a single message in the conversation history.
@@ -266,7 +270,7 @@ type ChatMessage struct {
 	// Content contains the actual text of the message.
 	Content string `json:"content"`
 
-	// FunctionName is required when Role is FunctionChatMessageRole.
+	// FunctionName is required when Role is FunctionChatMessage.
 	FunctionName ChatFunctionName `json:"name,omitempty"`
 	// FunctionCall is populated in a response when GPT requires a function execution.
 	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
@@ -538,7 +542,7 @@ You must use JSON format for the argument to make a function call.
 `
 
 var fixFunctionHallucinationMessage = ChatMessage{
-	Role:    SystemChatMessageRole,
+	Role:    SystemChatMessage,
 	Content: FixFunctionHallucination,
 }
 
@@ -548,7 +552,7 @@ func MakeFunctionChatMessage(name ChatFunctionName, contentDTO any) (ChatMessage
 		return ChatMessage{}, err
 	}
 	return ChatMessage{
-		Role:         FunctionChatMessageRole,
+		Role:         FunctionChatMessage,
 		Content:      string(data),
 		FunctionName: name,
 	}, nil

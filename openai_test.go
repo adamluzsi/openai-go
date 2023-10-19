@@ -81,6 +81,10 @@ func TestChatSession_with(t *testing.T) {
 	assert.Equal(t, 4, len(session.Messages))
 	assert.Equal(t, "baz", session.LastAssistantContent())
 
+	session = session.WithMessage(openai.UserChatMessage.From("quux"))
+	assert.Equal(t, 5, len(session.Messages))
+	assert.Equal(t, session.Messages[4].Content, "quux")
+
 	assert.Empty(t, original.Messages, "with methods should not modify the receiver")
 	assert.Equal(t, openai.ChatMessage{
 		Role:    "system",
@@ -94,6 +98,9 @@ func TestChatSession_with(t *testing.T) {
 		Role:    "assistant",
 		Content: "baz",
 	}, session.Messages[2])
+
+	newSession := session.WithMessage(openai.SystemChatMessage.From("you are doing great"))
+	assert.NotEqual(t, session, newSession)
 }
 
 func TestClient_ChatSession_smoke(t *testing.T) {
@@ -306,7 +313,7 @@ func TestClient_ChatCompletion_contextWithError(t *testing.T) {
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
 			{
-				Role:    openai.SystemChatMessageRole,
+				Role:    openai.SystemChatMessage,
 				Content: "You are awesome.",
 			},
 		},
@@ -370,8 +377,8 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	req := openai.ChatCompletion{
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
-			{Role: openai.SystemChatMessageRole, Content: "You are a helpful assistant."},
-			{Role: openai.UserChatMessageRole, Content: "How's the current weather in Zürich?"},
+			{Role: openai.SystemChatMessage, Content: "You are a helpful assistant."},
+			{Role: openai.UserChatMessage, Content: "How's the current weather in Zürich?"},
 		},
 		Functions: functions,
 	}
@@ -386,7 +393,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 		reply  openai.ChatMessage
 	)
 	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
-		it.Must.Equal(got.Message.Role, openai.AssistantChatMessageRole)
+		it.Must.Equal(got.Message.Role, openai.AssistantChatMessage)
 		it.Must.NotNil(got.Message.FunctionCall)
 		assert.Equal(t, got.Message.FunctionCall.Name, funcName)
 		reply = got.Message
@@ -405,7 +412,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	assert.ContainExactly(t, keys, []string{"country", "city"})
 
 	req.Messages = append(req.Messages, openai.ChatMessage{
-		Role:         openai.FunctionChatMessageRole,
+		Role:         openai.FunctionChatMessage,
 		FunctionName: funcName,
 		Content:      `{"weather":"sunny"}`,
 	})
@@ -414,7 +421,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
-		it.Must.Equal(got.Message.Role, openai.AssistantChatMessageRole)
+		it.Must.Equal(got.Message.Role, openai.AssistantChatMessage)
 		it.Must.Contain(got.Message.Content, "sunny")
 		it.Must.Contain(got.Message.Content, "Zürich")
 	})
@@ -492,7 +499,7 @@ func TestChatSession_functions(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
-		it.Must.Equal(got.Role, openai.AssistantChatMessageRole)
+		it.Must.Equal(got.Role, openai.AssistantChatMessage)
 		it.Must.NotNil(got.FunctionCall)
 		assert.Equal(t, got.FunctionCall.Name, funcName)
 
@@ -507,7 +514,7 @@ func TestChatSession_functions(t *testing.T) {
 	})
 
 	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
-		it.Must.Equal(got.Role, openai.AssistantChatMessageRole)
+		it.Must.Equal(got.Role, openai.AssistantChatMessage)
 		it.Must.Contain(got.Content, "sunny")
 		it.Must.Contain(got.Content, "Zürich")
 	})
