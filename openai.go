@@ -12,6 +12,7 @@ import (
 	"go.llib.dev/frameless/pkg/logger"
 	"go.llib.dev/frameless/pkg/retry"
 	"go.llib.dev/frameless/pkg/zerokit"
+	"go.llib.dev/testcase/pp"
 	"io"
 	"net/http"
 	"os"
@@ -29,19 +30,29 @@ type (
 	InstructModelID string
 )
 
-// Various ChatModelID constants.
-const (
-	GPT4     ChatModelID = "gpt-4"             // GPT-4 model
-	GPT4_32k ChatModelID = "gpt-4-32k"         // GPT-4 model with 32k tokens
-	GPT3     ChatModelID = "gpt-3.5-turbo"     // GPT-3.5 Turbo model
-	GPT3_16k ChatModelID = "gpt-3.5-turbo-16k" // GPT-3.5 Turbo model with 16k tokens
-
-	// Babbage is a GPT base models, which is not optimized for instruction-following
-	// and are less capable, but they can be effective when fine-tuned for narrow tasks.
-	// They also cost-efficient to use for testing purposes.
-	// The Babbage model usage cost is $0.0004 / 1K tokens.
-	Babbage InstructModelID = "babbage-002"
+const ( // GPT4
+	GPT4         ChatModelID = GPT4_Preview
+	GPT4_Vision  ChatModelID = "gpt-4-vision-preview"
+	GPT4_Preview ChatModelID = "gpt-4-1106-preview"
+	GPT4_Stable  ChatModelID = "gpt-4"
+	// GPT4_32k
+	// DEPRECATED: use GPT4
+	GPT4_32k ChatModelID = "gpt-4-32k" // GPT-4 model with 32k tokens
 )
+
+const ( // GPT3
+	GPT3 ChatModelID = "gpt-3.5-turbo" // GPT-3.5 Turbo model
+
+	// GPT3_16k
+	// DEPRECATED: use GPT3 directly
+	GPT3_16k ChatModelID = "gpt-3.5-turbo-16k" // GPT-3.5 Turbo model with 16k tokens
+)
+
+// Babbage is a GPT base models, which is not optimized for instruction-following
+// and are less capable, but they can be effective when fine-tuned for narrow tasks.
+// They also cost-efficient to use for testing purposes.
+// The Babbage model usage cost is $0.0004 / 1K tokens.
+const Babbage InstructModelID = "babbage-002"
 
 // Client represents the OpenAI API client.
 type Client struct {
@@ -195,7 +206,7 @@ type ChatCompletion struct {
 	// For example, you can define functions like send_email(to: string, body: string)
 	// or get_current_weather(location: string, unit: 'celsius' | 'fahrenheit').
 	// Note: Defining functions will count against the model's token limit.
-	Functions []ChatFunction `json:"functions,omitempty"`
+	Functions []ChatFunction `json:"-"`
 
 	// FunctionCall is a string that specifies the behavior of function calling
 	// during the chat completion. It can have the following values:
@@ -206,6 +217,37 @@ type ChatCompletion struct {
 	// function calls, providing a way to either automate or manually control actions.
 	// When left nil, it is interpreted as "auto" on OpenAI API side.
 	FunctionCall *ChatFunctionCall `json:"function_call,omitempty"`
+
+	// Tools is the list of enabled tooling for the assistant.
+	// There can be a maximum of 128 tools per assistant.
+	// Tools can be of types code_interpreter, retrieval, or function.
+	//   example: [{ "type": "code_interpreter" }]
+	Tools []ChatCompletionTool `json:"tools,omitempty"`
+
+	// ToolChoice controls which (if any) function is called by the model.
+	// "none" is the default when no functions are present (NoneToolChoice).
+	// "auto" is the default if functions are present (AutoToolChoice).
+	ToolChoice ToolChoice `json:"tool_choice,omitempty"`
+
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+}
+
+func (cc ChatCompletion) MarshalJSON() ([]byte, error) {
+	type DTO ChatCompletion
+	var dto DTO
+	dto = DTO(cc.Clone())
+	if 0 < len(dto.Functions) {
+		for _, fn := range dto.Functions {
+			dto.Tools = append(dto.Tools, jsonMappingFunctionTool{Function: fn})
+		}
+		dto.Functions = nil
+	}
+	return json.Marshal(dto)
+}
+
+type ChatCompletionTool interface {
+	GetType() ToolType
+	json.Marshaler
 }
 
 func clonePointer[T any](ptr *T) *T {
@@ -344,8 +386,11 @@ call:
 		case GPT3:
 			session.Model = GPT3_16k
 			goto call
-		case GPT4:
-			session.Model = GPT4_32k
+		case GPT3_16k:
+			session.Model = GPT4_Preview
+			goto call
+		case GPT4_Stable:
+			session.Model = GPT4_Preview
 			goto call
 		}
 	}
@@ -366,7 +411,10 @@ call:
 			fnCall := *lastChoice.Message.FunctionCall
 
 			for _, fn := range session.Functions {
-				if fn.Name == fnCall.Name && fn.Exec != nil {
+				if fn.Name == fnCall.Name {
+					if fn.Exec == nil { // When plugin has no Exec, automatic execution is not supported
+						return session, nil
+					}
 
 					result, fnErr := fn.Exec(ctx, json.RawMessage(fnCall.Arguments))
 					if fnErr != nil { // if the function encountered an error, GPT needs to know about it.
@@ -430,6 +478,7 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCom
 	uri := c.BaseURL + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", uri, bytes.NewBuffer(jsonPayload))
 	if err != nil {
+		pp.PP(response, err)
 		return response, err
 	}
 
@@ -439,6 +488,7 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCom
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		pp.PP(response, err)
 		return response, err
 	}
 	defer resp.Body.Close()
@@ -448,6 +498,7 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCom
 		return response, err
 	}
 
+	pp.PP(body)
 	if resp.StatusCode != http.StatusOK {
 		var errResp errorResponse
 		if err := json.Unmarshal(body, &errResp); err != nil {
@@ -518,13 +569,8 @@ type ChatFunction struct {
 type ChatFunctionExec func(ctx context.Context, payload json.RawMessage) (any, error)
 
 func (cfn ChatFunction) Validate() error {
-	if cfn.Exec == nil {
-		return ErrFunctionMissingExec
-	}
 	return nil
 }
-
-const ErrFunctionMissingExec errorkit.Error = "ErrFunctionMissingExec: Your function declaration is missing the execution function"
 
 type ChatFunctionName string
 
@@ -588,4 +634,116 @@ type ChatFunctionMapping interface {
 type chatFunctionMapping[Fn any] struct {
 	getParameters func() JSONSchema
 	callFunc      func(ChatFunctionCall) func(ChatMessage, error)
+}
+
+type ToolType string
+
+const (
+	CodeInterpreterToolType ToolType = "code_interpreter"
+	RetrievalToolType       ToolType = "retrieval"
+	FunctionToolType        ToolType = "function"
+)
+
+var _ = enum.Register[ToolType](
+	CodeInterpreterToolType,
+	RetrievalToolType,
+	FunctionToolType,
+)
+
+type jsonMappingFunctionTool struct{ Function ChatFunction }
+
+func (dto jsonMappingFunctionTool) GetType() ToolType {
+	return FunctionToolType
+}
+
+func (dto jsonMappingFunctionTool) MarshalJSON() ([]byte, error) {
+	type DTO struct {
+		Type     ToolType     `json:"type" enum:"function"`
+		Function ChatFunction `json:"function"`
+	}
+	return json.Marshal(DTO{
+		Type:     FunctionToolType,
+		Function: dto.Function,
+	})
+}
+
+type ResponseFormat struct {
+	Type string `json:"type"`
+}
+
+func JSONResponseFormat() ResponseFormat {
+	return ResponseFormat{Type: "json_object"}
+}
+
+func TextResponseFormat() ResponseFormat {
+	return ResponseFormat{Type: "text"}
+}
+
+///////////////////////////////////////////////////// Tool Choice /////////////////////////////////////////////////////
+
+type ToolChoiceID string
+
+var _ = enum.Register[ToolChoiceID](
+	toolChoiceIDNone,
+	toolChoiceIDAuto,
+	toolChoiceIDFunction,
+)
+
+type ToolChoice interface {
+	ToolChoiceID() ToolChoiceID
+	json.Marshaler
+}
+
+// NoneToolChoice means the model will not call a function and instead generates a message.
+type NoneToolChoice struct{}
+
+const toolChoiceIDNone ToolChoiceID = "none"
+
+func (NoneToolChoice) ToolChoiceID() ToolChoiceID {
+	return toolChoiceIDNone
+}
+
+func (NoneToolChoice) MarshalJSON() ([]byte, error) {
+	return json.Marshal(toolChoiceIDNone)
+}
+
+// AutoToolChoice means the model can pick between generating a message or calling a function.
+type AutoToolChoice struct{}
+
+const toolChoiceIDAuto ToolChoiceID = "auto"
+
+func (AutoToolChoice) ToolChoiceID() ToolChoiceID {
+	return toolChoiceIDAuto
+}
+
+func (AutoToolChoice) MarshalJSON() ([]byte, error) {
+	return json.Marshal(toolChoiceIDAuto)
+}
+
+// FunctionToolChoice Will tell GPT to use a specific function from the supplied tooling.
+type FunctionToolChoice struct {
+	// Name of the function that needs to be executed
+	Name ChatFunctionName
+}
+
+const toolChoiceIDFunction ToolChoiceID = "function"
+
+func (tc FunctionToolChoice) ToolChoiceID() ToolChoiceID {
+	return toolChoiceIDFunction
+}
+
+func (tc FunctionToolChoice) MarshalJSON() ([]byte, error) {
+	type DTOFunction struct {
+		Name string `json:"name"`
+	}
+	type DTO struct {
+		Type     string      `json:"type"`
+		Function DTOFunction `json:"function"`
+	}
+	return json.Marshal(DTO{
+		Type: string(tc.ToolChoiceID()),
+		Function: DTOFunction{
+			Name: string(tc.Name),
+		},
+	})
 }

@@ -520,7 +520,7 @@ func TestChatSession_functions(t *testing.T) {
 	})
 }
 
-func TestChatSession_functions_ExecRequired(t *testing.T) {
+func TestChatSession_functionWithoutExec(t *testing.T) {
 	client := openai.Client{BaseURL: "https://go.llib.dev"}
 
 	const funcName = "current-weather"
@@ -554,6 +554,12 @@ func TestChatSession_functions_ExecRequired(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, err := client.ChatSession(ctx, session)
-	assert.ErrorIs(t, err, openai.ErrFunctionMissingExec)
+	ses, err := client.ChatSession(ctx, session)
+	assert.NoError(t, err)
+	cm, ok := ses.LookupLastMessage()
+	assert.True(t, ok)
+	assert.Equal(t, cm.Role, openai.AssistantChatMessage)
+	assert.NotNil(t, cm.FunctionCall)
+	assert.Equal(t, cm.FunctionCall.Name, funcName)
+	assert.NotEmpty(t, cm.FunctionCall.Arguments)
 }
