@@ -9,6 +9,7 @@ import (
 	"go.llib.dev/testcase"
 	"go.llib.dev/testcase/clock/timecop"
 	"go.llib.dev/testcase/let"
+	"go.llib.dev/testcase/pp"
 	"go.llib.dev/testcase/random"
 	"math"
 	"net/http"
@@ -521,7 +522,7 @@ func TestChatSession_functions(t *testing.T) {
 }
 
 func TestChatSession_functionWithoutExec(t *testing.T) {
-	client := openai.Client{BaseURL: "https://go.llib.dev"}
+	client := openai.Client{}
 
 	const funcName = "current-weather"
 	functions := []openai.ChatFunction{
@@ -559,6 +560,7 @@ func TestChatSession_functionWithoutExec(t *testing.T) {
 	cm, ok := ses.LookupLastMessage()
 	assert.True(t, ok)
 	assert.Equal(t, cm.Role, openai.AssistantChatMessage)
+	pp.PP(ses, cm)
 	assert.NotNil(t, cm.FunctionCall)
 	assert.Equal(t, cm.FunctionCall.Name, funcName)
 	assert.NotEmpty(t, cm.FunctionCall.Arguments)

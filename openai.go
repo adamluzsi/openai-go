@@ -229,6 +229,10 @@ type ChatCompletion struct {
 	// "auto" is the default if functions are present (AutoToolChoice).
 	ToolChoice ToolChoice `json:"tool_choice,omitempty"`
 
+	// ResponseFormat is an object specifying the format that the model must output.
+	//
+	// Setting to { "type": "json_object" } enables JSON mode (JSONResponseFormat),
+	// which guarantees the message the model generates is valid JSON.
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 }
 
@@ -498,8 +502,11 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCom
 		return response, err
 	}
 
-	pp.PP(body)
 	if resp.StatusCode != http.StatusOK {
+		if !json.Valid(body) {
+			return response, fmt.Errorf("%d:\n%s", resp.StatusCode, string(body))
+		}
+
 		var errResp errorResponse
 		if err := json.Unmarshal(body, &errResp); err != nil {
 			return response, err
@@ -671,12 +678,12 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
-func JSONResponseFormat() ResponseFormat {
-	return ResponseFormat{Type: "json_object"}
+func JSONResponseFormat() *ResponseFormat {
+	return &ResponseFormat{Type: "json_object"}
 }
 
-func TextResponseFormat() ResponseFormat {
-	return ResponseFormat{Type: "text"}
+func TextResponseFormat() *ResponseFormat {
+	return &ResponseFormat{Type: "text"}
 }
 
 ///////////////////////////////////////////////////// Tool Choice /////////////////////////////////////////////////////
