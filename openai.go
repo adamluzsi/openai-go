@@ -60,7 +60,7 @@ type Client struct {
 
 	onInit sync.Once
 
-	functionMapping map[ChatFunctionName]FunctionMapping
+	functionMapping map[FunctionName]FunctionMapping
 }
 
 var DefaultRetryStrategy retry.Strategy = retry.Jitter{
@@ -594,25 +594,25 @@ type JSONSchemaItems struct {
 }
 
 type Function struct {
-	Name        ChatFunctionName `json:"name"`
-	Description string           `json:"description"`
-	Parameters  JSONSchema       `json:"parameters"`
+	Name        FunctionName `json:"name"`
+	Description string       `json:"description"`
+	Parameters  JSONSchema   `json:"parameters"`
 	// Exec is used to execute the Function when GPT request it.
 	// If Exec is not supplied, automatic Function execution is disabled for this function.
-	Exec ChatFunctionExec `json:"-"`
+	Exec FunctionExec `json:"-"`
 }
 
-type ChatFunctionExec func(ctx context.Context, payload json.RawMessage) (any, error)
+type FunctionExec func(ctx context.Context, payload json.RawMessage) (any, error)
 
 func (cfn Function) Validate() error {
 	return nil
 }
 
-type ChatFunctionName string
+type FunctionName string
 
 // FunctionCall is the request that the Assistant asks from us to complete.
 type FunctionCall struct {
-	Name ChatFunctionName `json:"name,omitempty"`
+	Name FunctionName `json:"name,omitempty"`
 	// Arguments is a JSON encoded call function with arguments in JSON format
 	Arguments string `json:"arguments,omitempty"`
 }
@@ -770,7 +770,7 @@ func (AutoToolChoice) MarshalJSON() ([]byte, error) {
 // FunctionToolChoice Will tell GPT to use a specific function from the supplied tooling.
 type FunctionToolChoice struct {
 	// Name of the function that needs to be executed
-	Name ChatFunctionName
+	Name FunctionName
 }
 
 const toolChoiceIDFunction ToolChoiceID = "function"
