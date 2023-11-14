@@ -57,7 +57,7 @@ func TestClient_ChatCompletion_smoke(t *testing.T) {
 	assert.NotEmpty(t, resp.Usage.TotalTokens)
 	assert.NotEmpty(t, resp.Usage.PromptTokens)
 	assert.NotEmpty(t, resp.Choices)
-	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
+	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.ChatCompletionResponseChoice) {
 		assert.Equal(it, "assistant", got.Message.Role)
 		assert.Contain(it, strings.ToLower(got.Message.Content), exampleToken)
 	})
@@ -118,7 +118,7 @@ func TestClient_ChatSession_smoke(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 4+1, len(session.Messages))
 
-	assert.Must(t).AnyOf(func(a *assert.AnyOf) {
+	assert.Must(t).AnyOf(func(a *assert.A) {
 		a.Test(func(it assert.It) { it.Must.Equal(session.LastAssistantContent(), "OK") })
 		a.Test(func(it assert.It) { it.Must.Contain(session.LastAssistantContent(), "OK") })
 	})
@@ -322,7 +322,7 @@ func TestClient_ChatCompletion_contextWithError(t *testing.T) {
 }
 
 func TestChatFunctionCall_json(t *testing.T) {
-	v := openai.ChatFunctionCall{
+	v := openai.FunctionCall{
 		Name:      "foo-bar-baz",
 		Arguments: `{"hello":"world!"}`,
 	}
@@ -331,7 +331,7 @@ func TestChatFunctionCall_json(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, data)
 
-	var got openai.ChatFunctionCall
+	var got openai.FunctionCall
 	assert.NoError(t, json.Unmarshal(data, &got))
 	assert.Equal(t, v, got)
 }
@@ -345,7 +345,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	}
 
 	const funcName = "current-weather"
-	functions := []openai.ChatFunction{
+	functions := []openai.Function{
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
@@ -389,15 +389,20 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	assert.NoError(t, err)
 
 	var (
-		fnCall openai.ChatFunctionCall
+		tcID   openai.ToolCallID
+		fnCall openai.FunctionCall
 		reply  openai.ChatMessage
 	)
-	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
-		it.Must.Equal(got.Message.Role, openai.AssistantChatMessage)
-		it.Must.NotNil(got.Message.FunctionCall)
-		assert.Equal(t, got.Message.FunctionCall.Name, funcName)
-		reply = got.Message
-		fnCall = *got.Message.FunctionCall
+	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.ChatCompletionResponseChoice) {
+		assert.Equal(it, got.Message.Role, openai.AssistantChatMessage)
+		assert.NotEmpty(it, got.Message.ToolCalls)
+		assert.OneOf(it, got.Message.ToolCalls, func(it assert.It, toolCall openai.ToolCall) {
+			assert.NotNil(it, toolCall.FunctionCall)
+			fnCall = *toolCall.FunctionCall
+			assert.Equal(t, toolCall.FunctionCall.Name, funcName)
+			reply = got.Message
+			tcID = toolCall.ID
+		})
 	})
 
 	req.Messages = append(req.Messages, reply)
@@ -411,16 +416,14 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	}
 	assert.ContainExactly(t, keys, []string{"country", "city"})
 
-	req.Messages = append(req.Messages, openai.ChatMessage{
-		Role:         openai.FunctionChatMessage,
-		FunctionName: funcName,
-		Content:      `{"weather":"sunny"}`,
-	})
+	message, err := openai.MakeFunctionChatMessage(tcID, map[string]string{"weather": "sunny"})
+	assert.NoError(t, err)
+	req.Messages = append(req.Messages, message)
 
 	resp, err = client.ChatCompletion(ctx, req)
 	assert.NoError(t, err)
 
-	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.Choice) {
+	assert.OneOf(t, resp.Choices, func(it assert.It, got openai.ChatCompletionResponseChoice) {
 		it.Must.Equal(got.Message.Role, openai.AssistantChatMessage)
 		it.Must.Contain(got.Message.Content, "sunny")
 		it.Must.Contain(got.Message.Content, "Zürich")
@@ -437,7 +440,7 @@ func TestChatSession_functions(t *testing.T) {
 	}
 
 	const funcName = "current-weather"
-	functions := []openai.ChatFunction{
+	functions := []openai.Function{
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
@@ -500,17 +503,21 @@ func TestChatSession_functions(t *testing.T) {
 
 	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
 		it.Must.Equal(got.Role, openai.AssistantChatMessage)
-		it.Must.NotNil(got.FunctionCall)
-		assert.Equal(t, got.FunctionCall.Name, funcName)
+		assert.OneOf(it, got.ToolCalls, func(it assert.It, got openai.ToolCall) {
+			fnCall, ok := got.LookupFunctionCall()
+			assert.True(it, ok)
+			assert.NotNil(it, fnCall)
+			assert.Equal(it, fnCall.Name, funcName)
 
-		args := make(map[string]any)
-		it.Must.NoError(json.Unmarshal([]byte(got.FunctionCall.Arguments), &args))
-		var keys []string
-		for key, val := range args {
-			assert.NotEmpty(t, val)
-			keys = append(keys, key)
-		}
-		assert.ContainExactly(t, keys, []string{"country", "city", "temperature"})
+			args := make(map[string]any)
+			it.Must.NoError(json.Unmarshal([]byte(got.FunctionCall.Arguments), &args))
+			var keys []string
+			for key, val := range args {
+				assert.NotEmpty(t, val)
+				keys = append(keys, key)
+			}
+			assert.ContainExactly(t, keys, []string{"country", "city", "temperature"})
+		})
 	})
 
 	assert.OneOf(t, session.Messages, func(it assert.It, got openai.ChatMessage) {
@@ -520,11 +527,11 @@ func TestChatSession_functions(t *testing.T) {
 	})
 }
 
-func TestChatSession_functions_ExecRequired(t *testing.T) {
-	client := openai.Client{BaseURL: "https://go.llib.dev"}
+func TestChatSession_functionWithoutExec(t *testing.T) {
+	client := openai.Client{}
 
 	const funcName = "current-weather"
-	functions := []openai.ChatFunction{
+	functions := []openai.Function{
 		{
 			Name:        funcName,
 			Description: "Retrieve the current weather.",
@@ -554,6 +561,22 @@ func TestChatSession_functions_ExecRequired(t *testing.T) {
 
 	ctx := context.Background()
 
-	_, err := client.ChatSession(ctx, session)
-	assert.ErrorIs(t, err, openai.ErrFunctionMissingExec)
+	ses, err := client.ChatSession(ctx, session)
+	assert.NoError(t, err)
+	cm, ok := ses.LookupLastMessage()
+	assert.True(t, ok)
+	assert.Equal(t, cm.Role, openai.AssistantChatMessage)
+	assert.AnyOf(t, func(a *assert.A) {
+		a.Test(func(t assert.It) {
+			assert.NotNil(t, cm.ToolCalls)
+			assert.OneOf(t, cm.ToolCalls, func(t assert.It, got openai.ToolCall) {
+				fnCall, ok := got.LookupFunctionCall()
+				assert.True(t, ok)
+				assert.Equal(t, fnCall, *got.FunctionCall)
+				assert.NotNil(t, got.FunctionCall)
+				assert.Equal(t, got.FunctionCall.Name, funcName)
+				assert.NotEmpty(t, got.FunctionCall.Arguments)
+			})
+		})
+	})
 }

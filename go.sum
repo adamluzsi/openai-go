@@ -1,4 +1,8 @@
 go.llib.dev/frameless v0.167.4 h1:xy5/QAbmD6ej75CBNBw6myw3u7YCiuUeXgmBr+qd75k=
 go.llib.dev/frameless v0.167.4/go.mod h1:OBeHW5kmq29AxowC7PtIuxKeK4Js9r69SvUrq8hKNJY=
+go.llib.dev/frameless v0.172.0 h1:9GP7iYh9VcLZdm70OPrtdEDOsN6gt5ry+cjtbgqmphI=
+go.llib.dev/frameless v0.172.0/go.mod h1:bAzJdlLwtjD5XXuzS74dFgLwNuLOi6dPR1FMr/NqQog=
 go.llib.dev/testcase v0.144.0 h1:TPymgbj/nYHWKN19XTqa3XuqDCU4wGuIbBe7KsNVgJg=
 go.llib.dev/testcase v0.144.0/go.mod h1:eNeWtttI6gxtHp/+r4X2Iqwv1QfIvcPTDHaAtkItfuQ=
+go.llib.dev/testcase v0.145.1 h1:ctmrzIYRYP3n8uFDjE7jy2OfDjV+aDPD07UBnTMRvwg=
+go.llib.dev/testcase v0.145.1/go.mod h1:eNeWtttI6gxtHp/+r4X2Iqwv1QfIvcPTDHaAtkItfuQ=
