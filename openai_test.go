@@ -344,22 +344,22 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 		City    string `json:"city"`
 	}
 
-	const funcName = "current-weather"
+	const funcName = "current-weather-prediction"
 	functions := []openai.Function{
 		{
 			Name:        funcName,
-			Description: "Retrieve the current weather.",
+			Description: "Retrieve the current weather-prediction.",
 			Parameters: openai.JSONSchema{
 				Type: "object",
 				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
-						Description: "The city's name where the weather should be checked",
+						Description: "The city's name where the weather-prediction should be checked",
 						Required:    true,
 					},
 					"city": {
 						Type:        "string",
-						Description: "the city's name where the weather should be checked",
+						Description: "the city's name where the weather-prediction should be checked",
 					},
 				},
 				Required: []string{"city"},
@@ -369,7 +369,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 				if err := json.Unmarshal(payload, &dto); err != nil {
 					return nil, err
 				}
-				return map[string]any{"weather": "sunny"}, nil
+				return map[string]any{"weather-prediction": "sunny"}, nil
 			},
 		},
 	}
@@ -378,7 +378,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 		Model: CheapestChatModel,
 		Messages: []openai.ChatMessage{
 			{Role: openai.SystemChatMessage, Content: "You are a helpful assistant."},
-			{Role: openai.UserChatMessage, Content: "How's the current weather in Zürich?"},
+			{Role: openai.UserChatMessage, Content: "How's the current weather-prediction in Zürich?"},
 		},
 		Functions: functions,
 	}
@@ -416,7 +416,7 @@ func TestClient_ChatCompletion_functions(t *testing.T) {
 	}
 	assert.ContainExactly(t, keys, []string{"country", "city"})
 
-	message, err := openai.MakeFunctionChatMessage(tcID, map[string]string{"weather": "sunny"})
+	message, err := openai.MakeFunctionChatMessage(tcID, map[string]string{"weather-prediction": "sunny"})
 	assert.NoError(t, err)
 	req.Messages = append(req.Messages, message)
 
@@ -439,22 +439,22 @@ func TestChatSession_functions(t *testing.T) {
 		Temperature []string `json:"temperature"`
 	}
 
-	const funcName = "current-weather"
+	const funcName = "current-weather-prediction"
 	functions := []openai.Function{
 		{
 			Name:        funcName,
-			Description: "Retrieve the current weather.",
+			Description: "Retrieve the current weather-prediction.",
 			Parameters: openai.JSONSchema{
 				Type: "object",
 				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
-						Description: "The city's name where the weather should be checked",
+						Description: "The city's name where the weather-prediction should be checked",
 						Required:    true,
 					},
 					"city": {
 						Type:        "string",
-						Description: "the city's name where the weather should be checked",
+						Description: "the city's name where the weather-prediction should be checked",
 					},
 					"temperature": {
 						Type:        "array",
@@ -475,7 +475,7 @@ func TestChatSession_functions(t *testing.T) {
 				}
 				assert.Should(t).NotEmpty(dto)
 				return map[string]any{
-					"weather": "sunny",
+					"weather-prediction": "sunny",
 					"temperature": map[string]any{
 						"value": 42,
 						"metric": func() string {
@@ -493,7 +493,7 @@ func TestChatSession_functions(t *testing.T) {
 	session := openai.ChatSession{}.
 		WithModel(CheapestChatModel).
 		WithSystemMessage("You are a helpful assistant.").
-		WithUserMessage("How's the current weather in Zürich?").
+		WithUserMessage("How's the current weather-prediction in Zürich?").
 		WithFunction(functions...)
 
 	ctx := context.Background()
@@ -530,22 +530,22 @@ func TestChatSession_functions(t *testing.T) {
 func TestChatSession_functionWithoutExec(t *testing.T) {
 	client := openai.Client{}
 
-	const funcName = "current-weather"
+	const funcName = "current-weather-prediction"
 	functions := []openai.Function{
 		{
 			Name:        funcName,
-			Description: "Retrieve the current weather.",
+			Description: "Retrieve the current weather-prediction.",
 			Parameters: openai.JSONSchema{
 				Type: "object",
 				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
-						Description: "The city's name where the weather should be checked",
+						Description: "The city's name where the weather-prediction should be checked",
 						Required:    true,
 					},
 					"city": {
 						Type:        "string",
-						Description: "the city's name where the weather should be checked",
+						Description: "the city's name where the weather-prediction should be checked",
 					},
 				},
 				Required: []string{"city"},
@@ -556,7 +556,7 @@ func TestChatSession_functionWithoutExec(t *testing.T) {
 	session := openai.ChatSession{}.
 		WithModel(CheapestChatModel).
 		WithSystemMessage("You are a helpful assistant.").
-		WithUserMessage("How's the current weather in Zürich?").
+		WithUserMessage("How's the current weather-prediction in Zürich?").
 		WithFunction(functions...)
 
 	ctx := context.Background()
@@ -581,22 +581,22 @@ func TestChatSession_withExecAndExecInterrupt(t *testing.T) {
 	client := openai.Client{}
 
 	var lastPayload json.RawMessage
-	const funcName = "current-weather"
+	const funcName = "current-weather-prediction"
 	functions := []openai.Function{
 		{
 			Name:        funcName,
-			Description: "Retrieve the current weather.",
+			Description: "Retrieve the current weather-prediction.",
 			Parameters: openai.JSONSchema{
 				Type: "object",
 				Properties: map[string]openai.JSONSchemaProperty{
 					"country": {
 						Type:        "string",
-						Description: "The city's name where the weather should be checked",
+						Description: "The city's name where the weather-prediction should be checked",
 						Required:    true,
 					},
 					"city": {
 						Type:        "string",
-						Description: "the city's name where the weather should be checked",
+						Description: "the city's name where the weather-prediction should be checked",
 					},
 				},
 				Required: []string{"city"},
@@ -611,7 +611,7 @@ func TestChatSession_withExecAndExecInterrupt(t *testing.T) {
 	session := openai.ChatSession{}.
 		WithModel(CheapestChatModel).
 		WithSystemMessage("You are a helpful assistant.").
-		WithUserMessage("How's the current weather in Zürich?").
+		WithUserMessage("How's the current weather-prediction in Zürich?").
 		WithFunction(functions...)
 
 	ctx := context.Background()
@@ -631,4 +631,108 @@ func TestChatSession_withExecAndExecInterrupt(t *testing.T) {
 		assert.Equal(t, got.FunctionCall.Name, funcName)
 		assert.NotEmpty(t, got.FunctionCall.Arguments)
 	})
+}
+
+func TestChatSession_supportsMultipleFunctionCallsAtTheSameTime(t *testing.T) {
+	client := openai.Client{}
+
+	type WeatherRequestDTO struct {
+		Country     string   `json:"country"`
+		City        string   `json:"city"`
+		Temperature []string `json:"temperature"`
+	}
+
+	var (
+		currentWeather       bool
+		weatherPredictionRan bool
+	)
+	functions := []openai.Function{
+		{
+			Name:        "current-weather",
+			Description: "Retrieve the current weather-prediction.",
+			Parameters: openai.JSONSchema{
+				Type: "object",
+				Properties: map[string]openai.JSONSchemaProperty{
+					"country": {
+						Type:        "string",
+						Description: "The city's name where the weather-prediction should be checked",
+						Required:    true,
+					},
+					"city": {
+						Type:        "string",
+						Description: "the city's name where the weather-prediction should be checked",
+					},
+					"temperature": {
+						Type:        "array",
+						Description: "defines what temperate units should be used",
+						Items: &openai.JSONSchemaItems{
+							Type: "string",
+							Enum: []string{"celsius", "fahrenheit"},
+						},
+						Required: true,
+					},
+				},
+				Required: []string{"city"},
+			},
+			Exec: func(ctx context.Context, payload json.RawMessage) (any, error) {
+				currentWeather = true
+				var dto WeatherRequestDTO
+				if err := json.Unmarshal(payload, &dto); err != nil {
+					return nil, err
+				}
+				assert.Should(t).NotEmpty(dto)
+				return map[string]any{
+					"weather-prediction": "sunny",
+					"temperature": map[string]any{
+						"value": 42,
+						"metric": func() string {
+							for _, metric := range dto.Temperature {
+								return metric
+							}
+							return "celsius"
+						}(),
+					},
+				}, nil
+			},
+		},
+		{
+			Name:        "people-mood-report",
+			Description: "Report back the reported mood of the people.",
+			Parameters: openai.JSONSchema{
+				Type: "object",
+				Properties: map[string]openai.JSONSchemaProperty{
+					"city": {
+						Type:        "string",
+						Description: "The city's name where the mood of the people should be checked.",
+					},
+				},
+				Required: []string{"city"},
+			},
+			Exec: func(ctx context.Context, payload json.RawMessage) (any, error) {
+				weatherPredictionRan = true
+				var dto WeatherRequestDTO
+				if err := json.Unmarshal(payload, &dto); err != nil {
+					return nil, err
+				}
+				assert.Should(t).NotEmpty(dto)
+				return map[string]any{"mood": "happy"}, nil
+			},
+		},
+	}
+
+	session := openai.ChatSession{}.
+		WithModel(CheapestChatModel).
+		WithSystemMessage("You are a helpful assistant.").
+		WithUserMessage("How's the current weather and the mood of the people in Zürich? Please use a single tools call.").
+		WithFunction(functions...)
+
+	ctx := context.Background()
+
+	session, err := client.ChatSession(ctx, session)
+	assert.NoError(t, err)
+
+	assert.True(t, currentWeather && weatherPredictionRan,
+		"expected that both function was used")
+
+	assert.NotEmpty(t, session.LastAssistantContent())
 }

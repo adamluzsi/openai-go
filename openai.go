@@ -10,6 +10,7 @@ import (
 	"go.llib.dev/frameless/pkg/errorkit"
 	"go.llib.dev/frameless/pkg/httpkit"
 	"go.llib.dev/frameless/pkg/logger"
+	"go.llib.dev/frameless/pkg/pointer"
 	"go.llib.dev/frameless/pkg/retry"
 	"go.llib.dev/frameless/pkg/zerokit"
 	"io"
@@ -409,28 +410,31 @@ call:
 		session.Messages = append(session.Messages, choice.Message)
 	}
 
-	var ok bool
-	session, ok, err = c.doToolCalls(ctx, session, response)
-	if err != nil {
-		return session, err
-	}
-	if ok { // if fnCall was executed, we need tell GPT about the results
-		goto call
+	if len(response.Choices) == 1 {
+		var ok bool
+		session, ok, err = c.doToolCalls(ctx, session, response.Choices[0])
+		if err != nil {
+			return session, err
+		}
+		if ok {
+			// if fnCall was executed, we need reply to GPT about the results
+			goto call
+		}
+	} else {
+		logger.Warn(ctx, "openai.Client.doToolCalls is unable to handle multi choices")
 	}
 
 	return session, nil
 }
 
 // doToolCalls currently can't handle multi-choice situations.
-func (c *Client) doToolCalls(ctx context.Context, session ChatSession, response ChatCompletionResponse) (_ ChatSession, rok bool, _ error) {
-	if len(response.Choices) != 1 {
+func (c *Client) doToolCalls(ctx context.Context, session ChatSession, choice ChatCompletionResponseChoice) (_ ChatSession, rok bool, _ error) {
+	if choice.Message.ToolCalls == nil {
 		return session, false, nil
 	}
-	choice := response.Choices[0]
-	if choice.FinishReason != FinishReasonToolCalls ||
-		choice.Message.ToolCalls == nil {
-		return session, false, nil
-	}
+	logger.Debug(ctx, "doToolCalls",
+		logger.Field("tool_calls", choice.Message.ToolCalls))
+
 	for _, toolCall := range choice.Message.ToolCalls {
 		fnCall, ok := toolCall.LookupFunctionCall()
 		if !ok {
@@ -622,6 +626,13 @@ type FunctionCall struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
+var _ = logger.RegisterFieldType[FunctionCall](func(call FunctionCall) logger.LoggingDetail {
+	return logger.Fields{
+		"name": string(call.Name),
+		"args": string(call.Arguments),
+	}
+})
+
 // System
 const FixFunctionHallucination = `
 Only use the functions you have been provided with.
@@ -738,6 +749,17 @@ type ToolCall struct {
 	Type         ToolType      `json:"type"`
 	FunctionCall *FunctionCall `json:"function,omitempty"`
 }
+
+var _ = logger.RegisterFieldType[ToolCall](func(call ToolCall) logger.LoggingDetail {
+	fields := logger.Fields{
+		"id":   string(call.ID),
+		"type": string(call.Type),
+	}
+	if call.Type == FunctionToolType {
+		fields["function"] = pointer.Deref(call.FunctionCall)
+	}
+	return fields
+})
 
 func (tc ToolCall) LookupFunctionCall() (FunctionCall, bool) {
 	if tc.Type != FunctionToolType || tc.FunctionCall == nil {
