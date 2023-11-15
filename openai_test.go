@@ -566,17 +566,69 @@ func TestChatSession_functionWithoutExec(t *testing.T) {
 	cm, ok := ses.LookupLastMessage()
 	assert.True(t, ok)
 	assert.Equal(t, cm.Role, openai.AssistantChatMessage)
-	assert.AnyOf(t, func(a *assert.A) {
-		a.Test(func(t assert.It) {
-			assert.NotNil(t, cm.ToolCalls)
-			assert.OneOf(t, cm.ToolCalls, func(t assert.It, got openai.ToolCall) {
-				fnCall, ok := got.LookupFunctionCall()
-				assert.True(t, ok)
-				assert.Equal(t, fnCall, *got.FunctionCall)
-				assert.NotNil(t, got.FunctionCall)
-				assert.Equal(t, got.FunctionCall.Name, funcName)
-				assert.NotEmpty(t, got.FunctionCall.Arguments)
-			})
-		})
+	assert.NotNil(t, cm.ToolCalls)
+	assert.OneOf(t, cm.ToolCalls, func(t assert.It, got openai.ToolCall) {
+		fnCall, ok := got.LookupFunctionCall()
+		assert.True(t, ok)
+		assert.Equal(t, fnCall, *got.FunctionCall)
+		assert.NotNil(t, got.FunctionCall)
+		assert.Equal(t, got.FunctionCall.Name, funcName)
+		assert.NotEmpty(t, got.FunctionCall.Arguments)
+	})
+}
+
+func TestChatSession_withExecAndExecInterrupt(t *testing.T) {
+	client := openai.Client{}
+
+	var lastPayload json.RawMessage
+	const funcName = "current-weather"
+	functions := []openai.Function{
+		{
+			Name:        funcName,
+			Description: "Retrieve the current weather.",
+			Parameters: openai.JSONSchema{
+				Type: "object",
+				Properties: map[string]openai.JSONSchemaProperty{
+					"country": {
+						Type:        "string",
+						Description: "The city's name where the weather should be checked",
+						Required:    true,
+					},
+					"city": {
+						Type:        "string",
+						Description: "the city's name where the weather should be checked",
+					},
+				},
+				Required: []string{"city"},
+			},
+			Exec: func(ctx context.Context, payload json.RawMessage) (any, error) {
+				lastPayload = payload
+				return nil, openai.ExecInterrupt
+			},
+		},
+	}
+
+	session := openai.ChatSession{}.
+		WithModel(CheapestChatModel).
+		WithSystemMessage("You are a helpful assistant.").
+		WithUserMessage("How's the current weather in Zürich?").
+		WithFunction(functions...)
+
+	ctx := context.Background()
+
+	ses, err := client.ChatSession(ctx, session)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, lastPayload)
+	cm, ok := ses.LookupLastMessage()
+	assert.True(t, ok)
+	assert.Equal(t, cm.Role, openai.AssistantChatMessage)
+	assert.NotNil(t, cm.ToolCalls)
+	assert.OneOf(t, cm.ToolCalls, func(t assert.It, got openai.ToolCall) {
+		fnCall, ok := got.LookupFunctionCall()
+		assert.True(t, ok)
+		assert.Equal(t, fnCall, *got.FunctionCall)
+		assert.NotNil(t, got.FunctionCall)
+		assert.Equal(t, got.FunctionCall.Name, funcName)
+		assert.NotEmpty(t, got.FunctionCall.Arguments)
 	})
 }

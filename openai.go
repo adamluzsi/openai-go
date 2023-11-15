@@ -457,6 +457,9 @@ func (c *Client) callFunction(ctx context.Context, session ChatSession, tcID Too
 		}
 
 		result, fnErr := fn.Exec(ctx, json.RawMessage(fnCall.Arguments))
+		if errors.Is(fnErr, ExecInterrupt) {
+			return session, false, nil
+		}
 		if fnErr != nil { // if the function encountered an error, GPT needs to know about it.
 			logger.Warn(ctx, "function execution encountered an error",
 				logger.Field("functionName", fn.Name),
@@ -603,6 +606,8 @@ type Function struct {
 }
 
 type FunctionExec func(ctx context.Context, payload json.RawMessage) (any, error)
+
+const ExecInterrupt errorkit.Error = "ExecInterrupt"
 
 func (cfn Function) Validate() error {
 	return nil
