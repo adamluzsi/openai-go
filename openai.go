@@ -64,9 +64,9 @@ type Client struct {
 	functionMapping map[FunctionName]FunctionMapping
 }
 
-var DefaultRetryStrategy retry.Strategy = retry.Jitter{
-	MaxRetries:      9,
-	MaxWaitDuration: 3 * time.Second,
+var DefaultRetryStrategy retry.Strategy = retry.ExponentialBackoff{
+	MaxRetries:      16,
+	BackoffDuration: time.Second,
 }
 
 func (c *Client) Init() {
@@ -517,7 +517,11 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCom
 		return response, err
 	}
 
+	var faultCount int = -1
 	uri := c.BaseURL + "/v1/chat/completions"
+
+makeRequest:
+	faultCount++
 	req, err := http.NewRequestWithContext(ctx, "POST", uri, bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return response, err
@@ -540,20 +544,37 @@ func (c *Client) ChatCompletion(ctx context.Context, cc ChatCompletion) (ChatCom
 
 	if resp.StatusCode != http.StatusOK {
 		if !json.Valid(body) {
-			return response, fmt.Errorf("%d:\n%s", resp.StatusCode, string(body))
+			err := fmt.Errorf("%d:\n%s", resp.StatusCode, string(body))
+			logger.Debug(ctx, "error occured during openai.ChatCompletion",
+				logger.ErrField(err))
+			return response, err
 		}
 
 		var errResp errorResponse
 		if err := json.Unmarshal(body, &errResp); err != nil {
 			return response, err
 		}
-		if errResp.Error.Code == errorCodeContextLengthExceeded {
+		logger.Debug(ctx, "error occured during openai.ChatCompletion",
+			logger.Field("error", errResp))
+
+		switch errerr := errResp.Error; errerr.Code {
+		case errCodeContextLengthExceeded:
 			return response, fmt.Errorf("%w: %s",
 				ErrContextLengthExceeded,
-				errResp.Error.Message)
+				errerr.Message)
+
+		case errRateLimitExceeded:
+			if c.RetryStrategy.ShouldTry(ctx, faultCount) {
+				goto makeRequest
+			}
+			return response, fmt.Errorf("%w: %s",
+				errRateLimitExceeded,
+				errerr.Message)
+
+		default:
+			return response, fmt.Errorf("%s: %s",
+				errerr.Code, errerr.Message)
 		}
-		return response, fmt.Errorf("%s: %s",
-			errResp.Error.Code, errResp.Error.Message)
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return response, err
@@ -570,7 +591,19 @@ type errorResponse struct {
 	} `json:"error"`
 }
 
-const errorCodeContextLengthExceeded = "context_length_exceeded"
+var _ = logger.RegisterFieldType[errorResponse](func(r errorResponse) logger.LoggingDetail {
+	return logger.Fields{
+		"code":    r.Error.Code,
+		"message": r.Error.Message,
+		"type":    r.Error.Type,
+		"param":   r.Error.Param,
+	}
+})
+
+const (
+	errCodeContextLengthExceeded = "context_length_exceeded"
+	errRateLimitExceeded         = "rate_limit_exceeded"
+)
 
 const ErrContextLengthExceeded errorkit.Error = "ErrContextLengthExceeded"
 
@@ -821,3 +854,6 @@ func (tc FunctionToolChoice) MarshalJSON() ([]byte, error) {
 		},
 	})
 }
+
+//{"error":{"message":"rate_limit_exceeded: Request too large for gpt-3.5-turbo in organization org-Utp59DiEAZIBtPTEME47y6hP on tokens per min (TPM): Limit 160000, Requested 161170. The input or output tokens must be reduced in order to run successfully. Visit https://platform.openai.com/account/rate-limits to learn more."},"func":"go.llib.dev/llmate.Task.Act","index":0,"level":"debug","message":"If.Check.asking","timestamp":"2023-11-20T13:34:55+01:00"}
+//{"error":{"message":"error occured during llmate.Task execution: rate_limit_exceeded: Request too large for gpt-3.5-turbo in organization org-Utp59DiEAZIBtPTEME47y6hP on tokens per min (TPM): Limit 160000, Requested 161170. The input or output tokens must be reduced in order to run successfully. Visit https://platform.openai.com/account/rate-limits to learn more."},"level":"fatal","message":"application error","timestamp":"2023-11-20T13:34:55+01:00"}
