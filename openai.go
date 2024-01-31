@@ -57,14 +57,14 @@ type Client struct {
 	BaseURL       string
 	APIKey        string
 	HTTPClient    *http.Client
-	RetryStrategy retry.Strategy
+	RetryStrategy retry.Strategy[retry.FailureCount]
 
 	onInit sync.Once
 
 	functionMapping map[FunctionName]FunctionMapping
 }
 
-var DefaultRetryStrategy retry.Strategy = retry.ExponentialBackoff{
+var DefaultRetryStrategy retry.Strategy[retry.FailureCount] = retry.ExponentialBackoff{
 	MaxRetries:      16,
 	BackoffDuration: time.Second,
 }
@@ -568,7 +568,7 @@ makeRequest:
 				goto makeRequest
 			}
 			return response, fmt.Errorf("%w: %s",
-				errRateLimitExceeded,
+				ErrRateLimitExceeded,
 				errerr.Message)
 
 		default:
@@ -605,7 +605,10 @@ const (
 	errRateLimitExceeded         = "rate_limit_exceeded"
 )
 
-const ErrContextLengthExceeded errorkit.Error = "ErrContextLengthExceeded"
+const (
+	ErrContextLengthExceeded errorkit.Error = "ErrContextLengthExceeded"
+	ErrRateLimitExceeded     errorkit.Error = "ErrRateLimitExceeded"
+)
 
 // Chat Function
 
